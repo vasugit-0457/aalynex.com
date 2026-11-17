@@ -457,8 +457,8 @@ function renderMsgs(msgs, myId) {
       if (secureFinal) {
         if (oldRevision) {
           controls = '<span style="font-size:.78rem;color:var(--text-3);">Earlier revision — replaced by newer final. No checkout on old uploads.</span>';
-        } else if (!proj || !latestRevision) {
-          controls = '<span style="font-size:.78rem;color:var(--text-3);">Exact final/preview verification required. Do not pay yet.</span>';
+        } else if (!proj || !latestRevision || revision.pendingNewPreview) {
+          controls = '<span style="font-size:.78rem;color:var(--text-3);">A newer preview is awaiting its final, or this delivery needs verification. Do not pay yet.</span>';
         } else {
           // A preview must belong to THIS exact final (never the first preview).
           const previewControl = previewMsg
@@ -764,7 +764,7 @@ async function axPayInChat(projectId, finalMessageId = null) {
   }
   const conversationKey=[CU.id,p.freelancerId].sort().join('_');
   const latest=axDeliveryRevision.latest(DB.messages()[conversationKey]||[],p);
-  if(!latest?.paired || (finalMessageId && String(latest.final.id)!==String(finalMessageId))) {
+  if(!latest?.paired || latest.pendingNewPreview || (finalMessageId && String(latest.final.id)!==String(finalMessageId))) {
     showToast('Latest final needs its own matching watermarked preview. Payment was not started.','err','');
     return;
   }
