@@ -39,7 +39,14 @@ const axDeliveryRevision = (() => {
         explicit: !!explicit, revision: results.length + 1, isLatest: false });
       previousFinalIndex = i;
     }
-    if (results.length) results[results.length - 1].isLatest = true;
+    if (results.length) {
+      const current = results[results.length - 1];
+      current.isLatest = true;
+      // A new preview without its final is an incomplete newer submission.
+      // Do not let the previous revision remain payable in that window.
+      current.pendingNewPreview = stream.slice(previousFinalIndex + 1)
+        .some(message => isPreview(message, project));
+    }
     return results;
   }
   const latest = (messages, project) => {
