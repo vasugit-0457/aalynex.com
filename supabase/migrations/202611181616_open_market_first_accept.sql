@@ -20,6 +20,23 @@ CREATE POLICY "projects_open_market_freelancers_read" ON public.projects
        OR public.has_verified_premium(creator_id))
  );
 
+-- Restrictive checks protect against a freelancer impersonating a creator
+-- for *new* Open Market listings. Existing invite-only rows are unaffected.
+DROP POLICY IF EXISTS "projects_open_market_creator_insert" ON public.projects;
+CREATE POLICY "projects_open_market_creator_insert" ON public.projects
+ AS RESTRICTIVE FOR INSERT TO authenticated
+ WITH CHECK (open_market IS FALSE OR EXISTS (
+   SELECT 1 FROM public.profiles pf
+   WHERE pf.id = creator_id AND pf.role = 'creator'
+ ));
+DROP POLICY IF EXISTS "projects_open_market_creator_update" ON public.projects;
+CREATE POLICY "projects_open_market_creator_update" ON public.projects
+ AS RESTRICTIVE FOR UPDATE TO authenticated USING (true)
+ WITH CHECK (open_market IS FALSE OR EXISTS (
+   SELECT 1 FROM public.profiles pf
+   WHERE pf.id = creator_id AND pf.role = 'creator'
+ ));
+
 -- Intentionally narrow SECURITY DEFINER RPC: only validated freelancer, one conditional UPDATE.
 -- Permissions are explicitly restricted to authenticated accounts; no arbitrary row writes.
 CREATE OR REPLACE FUNCTION public.ax_claim_open_market_project(p_project_id text)
