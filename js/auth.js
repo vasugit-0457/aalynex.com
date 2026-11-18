@@ -308,169 +308,188 @@ async function doLogin() {
   }
 }
 
+// Initial step: create an OTP challenge; never mark the account ready yet.
 async function doSignup() {
-  const name = document.getElementById('su-name').value.trim();
-  const phoneRaw = document.getElementById('su-phone').value.trim();
-  const email = document.getElementById('su-email').value.trim();
-  const pw = document.getElementById('su-pw').value;
-  const profession = document.getElementById('su-profession').value;
-  const platform = document.getElementById('su-platform')?.value || '';
+  if (_signupBusy) return;
   const errEl = document.getElementById('signup-err');
   errEl.style.display = 'none';
+  let fields;
+  try { fields = axAuthSignupInput(); }
+  catch (e) { axAuthSignupError(e.message); return; }
+  if (!supaClient) { axAuthSignupError('Signup requires an internet connection.'); return; }
 
-  if (!name || !email || !pw) {
-    errEl.textContent = 'Please fill in all required fields.';
-    errEl.style.display = 'flex'; return;
-  }
-  if (!validateEmailFmt(email)) {
-    errEl.textContent = 'Please enter a valid email address.';
-    errEl.style.display = 'flex'; return;
-  }
-  if (pw.length < 6) {
-    errEl.textContent = 'Password must be at least 6 characters.';
-    errEl.style.display = 'flex'; return;
-  }
-
-  let cleanPhone = '';
-  if (phoneRaw) {
-    const phoneResult = validatePhone(phoneRaw);
-    if (!phoneResult.ok) {
-      errEl.textContent = phoneResult.msg;
-      errEl.style.display = 'flex'; return;
-    }
-    cleanPhone = phoneResult.phone;
-  }
-
-  if (!supaClient) {
-    errEl.textContent = 'Signup requires a connection. Please try again.';
-    errEl.style.display = 'flex'; return;
-  }
-
-  _signupOtpData = { name, phone: cleanPhone, email, pw, profession, platform, role: signupRole };
-
-  setBtn('signup-btn', true, 'Sending OTP...');
-
+  _signupBusy = true;
+  setBtn('signup-btn', true, 'Checking account...');
   try {
-    const { error } = await supaClient.auth.signInWithOtp({
-      email,
-      options: { shouldCreateUser: true }
-    });
-
-    if (error) {
-      setBtn('signup-btn', false);
-      if (error.message?.toLowerCase().includes('already registered')) {
-        errEl.textContent = 'This email is already registered. Please login instead.';
-      } else {
-        errEl.textContent = error.message || 'Failed to send OTP. Please try again.';
-      }
-      errEl.style.display = 'flex'; return;
-    }
-
-    if (!document.getElementById('signup-otp-fg')) {
-      const otpFg = document.createElement('div');
-      otpFg.className = 'fg';
-      otpFg.id = 'signup-otp-fg';
-      otpFg.innerHTML = `
-        <label>Verification code sent to ${escapeHtml(email)}</label>
-        <input id="signup-otp" type="text" inputmode="numeric"
-          maxlength="6" placeholder="Enter 6-digit code"
-          autocomplete="one-time-code"/>
-        <div class="otp-note">✓ Check your inbox (and spam folder)</div>`;
-      const btn = document.getElementById('signup-btn');
-      btn.parentElement.insertBefore(otpFg, btn);
-    }
-
-    const btn = document.getElementById('signup-btn');
-    btn.textContent = 'Verify & Create Account';
-    btn.onclick = doSignupVerifyOTP;
-    setBtn('signup-btn', false);
-
-  } catch (e) {
-    console.warn('Signup error', e);
-    setBtn('signup-btn', false);
-    errEl.textContent = 'Something went wrong. Please try again.';
-    errEl.style.display = 'flex';
-  }
-}
-
-async function doSignupVerifyOTP() {
-  const otp = (document.getElementById('signup-otp')?.value || '').trim();
-  const errEl = document.getElementById('signup-err');
-  errEl.style.display = 'none';
-
-  if (!otp || otp.length < 6) {
-    errEl.textContent = 'Please enter the 6-digit verification code.';
-    errEl.style.display = 'flex'; return;
-  }
-
-  setBtn('signup-btn', true, 'Verifying...');
-
-  try {
-    const { data, error } = await supaClient.auth.verifyOtp({
-      email: _signupOtpData.email,
-      token: otp,
-      type: 'email'
-    });
-
-    if (error || !data.user) {
-      setBtn('signup-btn', false);
-      errEl.textContent = 'Invalid or expired code. Please try again.';
-      errEl.style.display = 'flex';
-      document.getElementById('signup-otp').value = '';
+    // A verified account without a profile can safely resume onboarding.
+    // Never let an existing profile be overwritten or its role changed here.
+    const { data: { user } } = await supaClient.auth.getUser();
+    if (user?.email_confirmed_at) {
+      if (String(user.email || '').toLowerCase() !== fields.email)
+        throw Error('You are signed in to another email. Please log out before signing up.');
+      const { data: profile, error: lookupError } = await supaClient.from('profiles')
+        .select('id,role').eq('id', user.id).maybeSingle();
+      if (lookupError) throw Error('Could not check account. Try again.');
+      if (profile) throw Error('This email already has an account. Please use Login.');
+      _signupVerifiedUserId = user.id;
+      _signupRecoveryUserId = user.id;
+      _signupPasswordApplied = false;
+      _signupOtpData = fields;
+      _signupStage = 'verified';
+      await axFinishVerifiedSignup();
       return;
     }
 
+    // Send email OTP before creating profile or setting a password.
+    _signupOtpData = fields;
+    _signupVerifiedUserId = null;
+    _signupPasswordApplied = false;
+    setBtn('signup-btn', true, 'Sending verification code...');
+    const { error } = await supaClient.auth.signInWithOtp({
+      email: fields.email, options: { shouldCreateUser: true }
+    });
+    if (error) {
+      if (/rate limit|too many/i.test(error.message || ''))
+        throw Error('Too many requests. Please try again shortly.');
+      throw Error('Could not send verification code. Check your email and try again.');
+    }
+    _signupStage = 'otp';
+    axRenderSignupOTP();
+    axStartSignupResendCooldown();
+    document.getElementById('signup-otp')?.focus();
+  } catch (e) {
+    axAuthSignupError(e.message || 'Could not start signup. Please try again.');
+  } finally {
+    _signupBusy = false;
+    setBtn('signup-btn', false);
+    axSetSignupButton();
+  }
+}
+
+async function axFinishVerifiedSignup() {
+  if (!_signupVerifiedUserId || !_signupOtpData.email)
+    throw Error('Verification session expired. Please restart signup.');
+  // Validate again at finalization; users may edit fields after requesting OTP.
+  const fields = axAuthSignupInput();
+  if (fields.email !== _signupOtpData.email)
+    throw Error('Email changed after verification. Please restart signup.');
+  if (_signupStage === 'verified' && fields.role !== _signupOtpData.role)
+    throw Error('Role changed after verification. Select the original role or restart signup.');
+
+  const { data: { user }, error: userError } = await supaClient.auth.getUser();
+  if (userError || !user || user.id !== _signupVerifiedUserId ||
+      !user.email_confirmed_at ||
+      String(user.email || '').toLowerCase() !== fields.email)
+    throw Error('Your verified session expired. Please verify your email again.');
+
+  // Avoid ever changing an existing account through the signup form.
+  const { data: existing, error: lookupError } = await supaClient.from('profiles')
+    .select('id,role').eq('id', user.id).maybeSingle();
+  if (lookupError) throw Error('Could not check profile. Please retry.');
+  if (existing) throw Error('Account is already set up. Please log in.');
+
+  if (!_signupPasswordApplied) {
     const { error: pwError } = await supaClient.auth.updateUser({
-      password: _signupOtpData.pw,
+      password: fields.pw,
       data: {
-        name: _signupOtpData.name,
-        phone: _signupOtpData.phone,
-        role: _signupOtpData.role,
-        profession: _signupOtpData.profession,
-        platform: _signupOtpData.platform
+        name: fields.name,
+        phone: fields.phone,
+        role: fields.role, // Display metadata only; DB profile.role is authoritative.
+        profession: fields.profession,
+        platform: fields.platform
       }
     });
-    if (pwError) console.warn('Password set error', pwError);
+    if (pwError) throw Error(pwError.message || 'Password could not be saved. Try again.');
+    _signupPasswordApplied = true;
+  }
 
-    const { name, phone, email, profession, platform, role } = _signupOtpData;
+  // INSERT only; never UPSERT over an established profile/account role.
+  const { data: profile, error: profileError } = await supaClient.from('profiles')
+    .insert({
+      id: user.id, name: fields.name, phone: fields.phone, role: fields.role,
+      profession: fields.profession, platform: fields.platform,
+      avatar: fields.name.charAt(0).toUpperCase()
+    }).select('id,role').single();
+  if (profileError || !profile || profile.id !== user.id || profile.role !== fields.role)
+    throw Error('Email verified, but profile setup is incomplete. Click Complete Account to retry.');
 
-    await supaClient.from('profiles').upsert({
-      id: data.user.id,
-      name, phone, role, profession, platform,
-      avatar: name.charAt(0).toUpperCase()
-    }, { onConflict: 'id' });
+  const u = {
+    id: profile.id, name: fields.name, email: fields.email, phone: fields.phone,
+    role: profile.role, profession: fields.profession, platform: fields.platform,
+    avatar: fields.name.charAt(0).toUpperCase(), createdAt: Date.now(),
+    skills: [], portfolio_links: {}, resume_url: '', photo_url: '', experience: []
+  };
 
-    const u = {
-      id: data.user.id,
-      name, email, phone, role, profession, platform,
-      avatar: name.charAt(0).toUpperCase(),
-      createdAt: Date.now(),
-      skills: [], portfolio_links: {},
-      resume_url: '', photo_url: '', experience: []
-    };
+  // Login only after BOTH password and server-backed profile have succeeded.
+  const users = DB.users();
+  if (!users.find(x => x.id === u.id)) users.push({ ...u });
+  DB.saveUsers(users);
+  _resetSignupForm();
+  loginSuccess(u);
+  showToast('Your Aalynex account is ready!', 'ok', '');
+}
 
-    const users = DB.users();
-    if (!users.find(x => x.id === u.id)) users.push({ ...u });
-    DB.saveUsers(users);
-
-    setBtn('signup-btn', false);
-    _resetSignupForm();
-    loginSuccess(u);
-    showToast(`Welcome, ${name.split(' ')[0]}!`, 'ok', '🎉');
+async function doSignupVerifyOTP() {
+  if (_signupBusy) return;
+  const errEl = document.getElementById('signup-err');
+  errEl.style.display = 'none';
+  if (_signupStage !== 'verified') {
+    const otp = (document.getElementById('signup-otp')?.value || '').trim();
+    if (!/^\d{6}$/.test(otp)) {
+      axAuthSignupError('Enter the 6-digit verification code.');
+      return;
+    }
+    if (!_signupOtpData?.email) {
+      axAuthSignupError('Your signup details expired. Please restart signup.');
+      return;
+    }
+  }
+  _signupBusy = true;
+  setBtn('signup-btn', true, 'Verifying account...');
+  try {
+    if (_signupStage !== 'verified') {
+      const token = document.getElementById('signup-otp').value.trim();
+      const { data, error } = await supaClient.auth.verifyOtp({
+        email: _signupOtpData.email, token, type: 'email'
+      });
+      if (error || !data?.user) {
+        document.getElementById('signup-otp').value = '';
+        throw Error('Invalid or expired code. Check your email or resend.');
+      }
+      _signupVerifiedUserId = data.user.id;
+      _signupStage = 'verified';
+    }
+    await axFinishVerifiedSignup();
   } catch (e) {
-    console.warn('OTP verify error', e);
+    axAuthSignupError(e.message || 'Account setup failed. Please retry.');
+  } finally {
+    _signupBusy = false;
     setBtn('signup-btn', false);
-    errEl.textContent = 'Verification failed. Please try again.';
-    errEl.style.display = 'flex';
+    axSetSignupButton();
   }
 }
 
 function _resetSignupForm() {
+  // Clear sensitive state on success. Never persist OTP or password in storage.
+  if (_signupResendTicker) clearInterval(_signupResendTicker);
+  _signupResendTicker = null;
+  _signupResendUntil = 0;
+  _signupVerifiedUserId = null;
+  _signupRecoveryUserId = null;
+  _signupPasswordApplied = false;
   _signupOtpData = {};
-  const otpFg = document.getElementById('signup-otp-fg');
-  if (otpFg) otpFg.remove();
-  const btn = document.getElementById('signup-btn');
-  if (btn) { btn.textContent = 'Create Account'; btn.onclick = doSignup; }
+  _signupStage = 'start';
+  const email = document.getElementById('su-email');
+  if (email) email.readOnly = false;
+  for (const id of ['su-pw', 'su-pw2', 'signup-otp']) {
+    const field = document.getElementById(id);
+    if (field) field.value = '';
+  }
+  const note = document.getElementById('su-recovery-note');
+  if (note) note.style.display = 'none';
+  document.getElementById('signup-otp-fg')?.remove();
+  axUpdatePasswordStrength();
+  axSetSignupButton();
 }
 
 async function loginSuccess(u) {
