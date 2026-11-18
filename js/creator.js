@@ -152,7 +152,7 @@ function cProjectDetail(pid) {
   const invited    = (p.invited_freelancers || []).map(id => DB.users().find(u => u.id === id)).filter(Boolean);
   const acceptedBy = p.freelancerId ? DB.users().find(u => u.id === p.freelancerId) : null;
 
-  const statusBadge = `<span class="pstatus ${escapeHtml(statusClass(p.status))}">${escapeHtml(p.status === 'open' ? (p.openMarket ? 'Open Market · Awaiting acceptance' : 'Waiting for acceptance') : statusLabel(p.status))}</span>`;
+  const statusBadge = `<span class="pstatus ${escapeHtml(statusClass(p.status))}">${escapeHtml(p.status === 'open' ? (p.openMarket ? (p.marketReady ? 'Open Market · Awaiting acceptance' : 'Preparing Open Market listing') : 'Waiting for acceptance') : statusLabel(p.status))}</span>`;
   const acceptedLine = acceptedBy
     ? `Accepted by <strong>${escapeHtml(acceptedBy.name)}</strong>`
     : 'Not accepted yet — waiting for an editor to accept';
@@ -656,10 +656,10 @@ async function wfContent() {
         <span class="ax-audience-icon">◎</span><span class="ax-audience-content"><span class="ax-audience-label">Select Freelancers</span><span class="ax-audience-description">Choose who receives this private invitation. First selected editor to accept wins.</span></span>
       </button>
       <button type="button" class="ax-audience-option ${axProjectAudience === 'market' ? 'active' : ''}" aria-pressed="${axProjectAudience === 'market'}" onclick="axSetProjectAudience('market')">
-        <span class="ax-audience-icon">⌁</span><span class="ax-audience-content"><span class="ax-audience-label">Open Market</span><span class="ax-audience-description">Publish to all registered freelancers. The first successful acceptance gets the project.</span></span>
+        <span class="ax-audience-icon">⌁</span><span class="ax-audience-content"><span class="ax-audience-label">Open Market</span><span class="ax-audience-description">Publish to all eligible freelancers. First successful acceptance gets the project.</span></span>
       </button>
     </div>
-    ${axProjectAudience === 'market' ? `<div class="ax-market-explainer"><span class="ax-audience-icon">✓</span><div><strong>Available to all freelancers</strong><p>Your project will appear in everyone's Project Requests after your files finish uploading. Only one freelancer can accept it. Once claimed, it disappears from other freelancers' feeds.</p></div></div>` : ''}
+    ${axProjectAudience === 'market' ? `<div class="ax-market-explainer"><span class="ax-audience-icon">✓</span><div><strong>Available to eligible freelancers</strong><p>After files upload, the project appears in eligible freelancers' Project Requests. First successful acceptance wins. Managed Editors follow existing Premium access rules. Once claimed, the listing closes.</p></div></div>` : ''}
     <div class="ax-invite-list" style="${axProjectAudience === 'market' ? 'display:none;' : ''}">
     <p style="color:var(--text-3);font-size:.8rem;margin-bottom:14px;">Select specific freelancer accounts. Their specialty may be any creative service. First invited editor to accept gets the job.</p>
     <div class="f-grid">
@@ -1115,7 +1115,7 @@ function cProjects() {
   </div>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
               <div class="pstatus ${escapeHtml(statusClass(p.status))}">
-                ${escapeHtml(p.status === 'open' ? (p.openMarket ? 'Open Market' : 'Waiting') : statusLabel(p.status))}
+                ${escapeHtml(p.status === 'open' ? (p.openMarket ? (p.marketReady ? 'Open Market' : 'Preparing listing') : 'Waiting') : statusLabel(p.status))}
               </div>
               ${p.status !== 'open' ? `<button class="btn btn-primary btn-xs">Manage</button>` : ''}
             </div>
