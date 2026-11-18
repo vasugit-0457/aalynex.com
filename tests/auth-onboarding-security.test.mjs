@@ -290,3 +290,30 @@ test('auth UI contains confirm-password, show/hide, resend, and no Google login'
   assert.match(styles,/ax-auth-recovery-note/);
   assert.doesNotMatch(index,/signInWithOAuth|google-signin|Google Sign In/);
 });
+
+
+test('after the 60-second cooldown resend requests an OTP without creating a user again',async()=>{
+  const {api,state,fake}=fixture();
+  const initial=Date.now();
+  fake.Date=class TestClock extends Date { static now(){return initial+61000;} };
+  await api.doSignup();
+  fake.Date=class TestClockLater extends Date { static now(){return initial+122000;} };
+  await api.resendSignupOTP();
+  assert.equal(state.otpRequests.length,2);
+  assert.equal(state.otpRequests[1].options.shouldCreateUser,false);
+});
+test('unconfirmed account must not be finalized through recovery shortcut',()=>{
+  const {api,state}=fixture();
+  assert.equal(api.showVerifiedSignupRecovery({id:ME,email:EMAIL,email_confirmed_at:null}),false);
+  assert.equal(state.logins.length,0);
+  assert.equal(state.profileInserts.length,0);
+});
+test('invalid signup form sends neither an OTP nor a password to the server',async()=>{
+  const {api,el,state}=fixture();
+  el('su-pw').value='short';
+  await api.doSignup();
+  assert.equal(state.otpRequests.length,0);
+  assert.equal(state.passwordSaves.length,0);
+  assert.equal(state.profileInserts.length,0);
+  assert.equal(state.logins.length,0);
+});
