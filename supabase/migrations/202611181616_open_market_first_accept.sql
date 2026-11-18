@@ -14,6 +14,10 @@ CREATE POLICY "projects_open_market_freelancers_read" ON public.projects
   AND creator_id IS DISTINCT FROM (SELECT auth.uid())
   AND EXISTS (SELECT 1 FROM public.profiles pf
     WHERE pf.id = (SELECT auth.uid()) AND pf.role = 'freelancer')
+  -- Preserve the existing Managed Editor/Premium restriction.
+  AND (NOT EXISTS (SELECT 1 FROM public.managed_editors me
+       WHERE me.freelancer_id = (SELECT auth.uid()))
+       OR public.has_verified_premium(creator_id))
  );
 
 -- Intentionally narrow SECURITY DEFINER RPC: only validated freelancer, one conditional UPDATE.
@@ -34,6 +38,9 @@ BEGIN
   WHERE p.id = p_project_id AND p.open_market IS TRUE AND p.market_ready IS TRUE
     AND p.status = 'open' AND p.freelancer_id IS NULL
     AND p.creator_id IS DISTINCT FROM v_actor
+    AND (NOT EXISTS (SELECT 1 FROM public.managed_editors me
+         WHERE me.freelancer_id = v_actor)
+         OR public.has_verified_premium(p.creator_id))
   RETURNING p.id INTO v_claimed_id;
  RETURN v_claimed_id IS NOT NULL;
 END;
