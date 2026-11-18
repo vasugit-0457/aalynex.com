@@ -12,7 +12,9 @@ const sql = readFileSync(new URL('../supabase/migrations/202611181500_secure_pro
 const from = authSource.indexOf('const AX_AUTH_MIN_PASSWORD_LENGTH = 12;');
 const to = authSource.indexOf('async function loginSuccess(u) {', from);
 assert.ok(from >= 0 && to > from);
-const section = authSource.slice(from, to);
+const resetStart = authSource.indexOf('/* ---- FORGOT PASSWORD (OTP based, retry-safe) ---- */');
+assert.ok(resetStart > to, 'password reset handlers must exist');
+const section = authSource.slice(from, to) + '\n' + authSource.slice(resetStart);
 const ME = '11111111-1111-4111-8111-111111111111';
 const EMAIL = 'new-user@example.com';
 const goodPassword = 'UniquePassphrase_2026!';
