@@ -13,7 +13,11 @@ BEGIN
       CHECK (role IS NOT NULL AND role IN ('creator','freelancer')) NOT VALID;
   END IF;
 END;
-$$;
+$;
+
+-- All existing 79 profiles were checked before rollout; validate rather than
+-- leaving a permanently unvalidated constraint.
+ALTER TABLE public.profiles VALIDATE CONSTRAINT ax_auth_profile_valid_role;
 
 CREATE OR REPLACE FUNCTION public.ax_auth_lock_profile_identity()
 RETURNS trigger
