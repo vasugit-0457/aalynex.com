@@ -13,8 +13,9 @@ window.addEventListener('load', async () => {
     try {
       const { data: { session } } = await supaClient.auth.getSession();
       if (session) {
-        const { data: profile } = await supaClient
-          .from('profiles').select(AX_PROFILE_PUBLIC_FIELDS).eq('id', session.user.id).single();
+        const { data: profile, error: profileError } = await supaClient
+          .from('profiles').select(AX_PROFILE_PUBLIC_FIELDS).eq('id', session.user.id).maybeSingle();
+        if (profileError) throw profileError; // Offline/denied is NOT "missing account".
         if (profile) {
           let ownPhone = '';
           try { ownPhone = await axGetOwnPhone(); } catch (e) { console.warn('Own phone unavailable', e); }
@@ -32,8 +33,15 @@ window.addEventListener('load', async () => {
           loginSuccess(u);
           return;
         }
+        // A verified Auth user without a profile must finish signup, not get
+        // silently kicked back to the homepage. No records are auto-created.
+        if (session.user.email_confirmed_at && typeof showVerifiedSignupRecovery === 'function') {
+          const { data: { user }, error: userError } = await supaClient.auth.getUser();
+          if (!userError && user?.id === session.user.id &&
+              showVerifiedSignupRecovery(user)) return;
+        }
       }
-    } catch (e) {}
+    } catch (e) { console.warn('Session restore requires verification', e); }
   }
 
   showScreen('screen-landing');
