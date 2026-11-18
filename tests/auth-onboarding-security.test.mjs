@@ -317,3 +317,36 @@ test('invalid signup form sends neither an OTP nor a password to the server',asy
   assert.equal(state.profileInserts.length,0);
   assert.equal(state.logins.length,0);
 });
+
+
+test('existing-account email OTP must not overwrite password or role',async()=>{
+  const {api,state,el}=fixture({existingProfile:{id:ME,role:'freelancer'}});
+  await api.doSignup();
+  await api.doSignupVerifyOTP();
+  assert.equal(state.passwordSaves.length,0);
+  assert.equal(state.profileInserts.length,0);
+  assert.equal(state.logins.length,0);
+  assert.equal(state.signOuts,1);
+  assert.match(el('signup-err').textContent,/already has an account/);
+});
+test('profile insert committed but response lost: retry can restore account safely',async()=>{
+  const {api,state}=fixture({failProfile:true});
+  await api.doSignup();
+  await api.doSignupVerifyOTP();
+  assert.equal(state.logins.length,0);
+  assert.equal(state.passwordSaves.length,1);
+  // Simulate backend commit even though the first HTTP response was an error.
+  state.existingProfile={id:ME,role:'creator'};
+  state.failProfile=false;
+  await api.doSignupVerifyOTP();
+  assert.equal(state.logins.length,1);
+  assert.equal(state.profileInserts.length,1);
+  assert.equal(state.passwordSaves.length,1);
+});
+test('existing email/password login path and Creator/Freelancer role selection remain intact',()=>{
+  assert.match(authSource,/auth\.signInWithPassword/);
+  assert.match(authSource,/profile\.role !== loginRole/);
+  assert.match(index,/id="lr-c"/);
+  assert.match(index,/id="lr-f"/);
+  assert.match(index,/autocomplete="current-password"/);
+});
