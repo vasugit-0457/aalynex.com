@@ -720,8 +720,8 @@
           <div class="role-btn ac" id="lr-c" onclick="setLRole('creator')">Creator</div>
           <div class="role-btn" id="lr-f" onclick="setLRole('freelancer')">Freelancer</div>
         </div>
-        <div class="fg"><label>Email Address</label><input type="email" id="login-email" placeholder="you@example.com"/></div>
-        <div class="fg"><label>Password</label><input type="password" id="login-pw" placeholder="Enter your password"/></div>
+        <div class="fg"><label for="login-email">Email Address</label><input type="email" id="login-email" placeholder="you@example.com" autocomplete="username" autocapitalize="none" spellcheck="false"/></div>
+        <div class="fg"><label for="login-pw">Password</label><div class="ax-auth-pw-row"><input type="password" id="login-pw" placeholder="Enter your password" autocomplete="current-password"/><button type="button" class="ax-auth-toggle-pw" onclick="toggleAuthPassword('login-pw',this)" aria-label="Show password" aria-pressed="false">Show</button></div></div>
 <div style="text-align:right;margin:-6px 0 2px;"><a onclick="doForgotPassword()" style="cursor:pointer;font-size:.8rem;color:var(--text-3);">Forgot password?</a></div>
 <div id="login-err" class="alert alert-e" style="display:none;"></div>
         <button class="btn btn-primary full-btn" style="margin-top:10px;" id="login-btn" onclick="doLogin()">Login &rarr;</button>
@@ -729,21 +729,23 @@
         <div class="form-footer">Don't have an account? <a onclick="switchTab('signup')">Sign up free</a></div>
       </div>
       <div id="form-signup" style="display:none;">
+        <div id="su-recovery-note" class="ax-auth-recovery-note" role="status" style="display:none;"></div>
         <div class="role-select">
           <div class="role-btn ac" id="sr-c" onclick="setSRole('creator')">Creator</div>
           <div class="role-btn" id="sr-f" onclick="setSRole('freelancer')">Freelancer</div>
         </div>
         <div class="form-row">
-          <div class="fg"><label>Full Name</label><input type="text" id="su-name" placeholder="Your full name"/></div>
-          <div class="fg"><label>Phone</label><input type="tel" id="su-phone" placeholder="+91 9XXXXXXX"/></div>
+          <div class="fg"><label for="su-name">Full Name</label><input type="text" id="su-name" placeholder="Your full name" autocomplete="name" maxlength="120"/></div>
+          <div class="fg"><label for="su-phone">Phone (optional)</label><input type="tel" id="su-phone" placeholder="+91 9XXXXXXX" autocomplete="tel" inputmode="tel"/></div>
         </div>
         <div class="fg">
-          <label>Email Address</label>
-          <input type="email" id="su-email" placeholder="you@example.com"/>
+          <label for="su-email">Email Address</label>
+          <input type="email" id="su-email" placeholder="you@example.com" autocomplete="email" autocapitalize="none" spellcheck="false"/>
           <div class="otp-note">Verification email will be sent</div>
         </div>
-        <div class="fg"><label>Password</label><input type="password" id="su-pw" placeholder="Min 6 characters"/></div>
-        <div class="fg"><label>Profession</label>
+        <div class="fg"><label for="su-pw">Create Password</label><div class="ax-auth-pw-row"><input type="password" id="su-pw" placeholder="At least 12 characters" autocomplete="new-password" minlength="12" oninput="axUpdatePasswordStrength()"/><button type="button" class="ax-auth-toggle-pw" onclick="toggleAuthPassword('su-pw',this)" aria-label="Show password" aria-pressed="false">Show</button></div><div id="su-pw-strength" class="ax-auth-strength" aria-live="polite">Use at least 12 characters. A long unique passphrase works well.</div></div>
+        <div class="fg"><label for="su-pw2">Confirm Password</label><div class="ax-auth-pw-row"><input type="password" id="su-pw2" placeholder="Re-enter your password" autocomplete="new-password" minlength="12"/><button type="button" class="ax-auth-toggle-pw" onclick="toggleAuthPassword('su-pw2',this)" aria-label="Show password" aria-pressed="false">Show</button></div></div>
+        <div class="fg"><label for="su-profession">Profession</label>
           <select id="su-profession">
             <option>Content Creator</option><option>Influencer</option>
             <option>YouTuber</option><option>Brand</option>
@@ -751,7 +753,7 @@
           </select>
         </div>
         <div id="su-creator-extra">
-          <div class="fg"><label>Primary Platform</label>
+          <div class="fg"><label for="su-platform">Primary Platform</label>
             <select id="su-platform"><option>YouTube</option><option>Instagram</option><option>LinkedIn</option><option>Multiple</option></select>
           </div>
         </div>
