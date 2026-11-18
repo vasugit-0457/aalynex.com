@@ -36,7 +36,7 @@ test('Creator market mode works with no selected freelancers', async () => {
   const html = await wf(makeCtx('market'));
   assert.match(html, /Publish to Open Market/);
   assert.match(html, /style="display:none;"/);
-  assert.match(html, /after your files finish uploading/);
+  assert.match(html, /After files upload/);
 });
 
 test('Existing private invitation mode remains available', async () => {
