@@ -13,7 +13,7 @@ BEGIN
       CHECK (role IS NOT NULL AND role IN ('creator','freelancer')) NOT VALID;
   END IF;
 END;
-$;
+$$;
 
 -- All existing 79 profiles were checked before rollout; validate rather than
 -- leaving a permanently unvalidated constraint.
