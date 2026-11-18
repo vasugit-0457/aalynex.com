@@ -386,7 +386,16 @@ async function axFinishVerifiedSignup() {
   const { data: existing, error: lookupError } = await supaClient.from('profiles')
     .select('id,role').eq('id', user.id).maybeSingle();
   if (lookupError) throw Error('Could not check profile. Please retry.');
-  if (existing) throw Error('Account is already set up. Please log in.');
+  if (existing && !_signupPasswordApplied) {
+    // An existing account should never be converted by the signup screen,
+    // even if its email owner successfully entered a one-time code.
+    await supaClient.auth.signOut();
+    _signupVerifiedUserId = null;
+    _signupStage = 'start';
+    throw Error('This email already has an account. Please use Login.');
+  }
+  if (existing && existing.role !== fields.role)
+    throw Error('Account role does not match. Please use Login.');
 
   if (!_signupPasswordApplied) {
     const { error: pwError } = await supaClient.auth.updateUser({
@@ -404,14 +413,20 @@ async function axFinishVerifiedSignup() {
   }
 
   // INSERT only; never UPSERT over an established profile/account role.
-  const { data: profile, error: profileError } = await supaClient.from('profiles')
-    .insert({
-      id: user.id, name: fields.name, phone: fields.phone, role: fields.role,
-      profession: fields.profession, platform: fields.platform,
-      avatar: fields.name.charAt(0).toUpperCase()
-    }).select('id,role').single();
-  if (profileError || !profile || profile.id !== user.id || profile.role !== fields.role)
-    throw Error('Email verified, but profile setup is incomplete. Click Complete Account to retry.');
+  // If the first insert committed but its HTTP response was lost, a retry
+  // can finish safely using that already-created matching profile.
+  let profile = existing;
+  if (!profile) {
+    const { data: inserted, error: profileError } = await supaClient.from('profiles')
+      .insert({
+        id: user.id, name: fields.name, phone: fields.phone, role: fields.role,
+        profession: fields.profession, platform: fields.platform,
+        avatar: fields.name.charAt(0).toUpperCase()
+      }).select('id,role').single();
+    if (profileError || !inserted || inserted.id !== user.id || inserted.role !== fields.role)
+      throw Error('Email verified, but profile setup is incomplete. Click Complete Account to retry.');
+    profile = inserted;
+  }
 
   const u = {
     id: profile.id, name: fields.name, email: fields.email, phone: fields.phone,
