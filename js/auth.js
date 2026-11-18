@@ -655,76 +655,154 @@ function logout() {
   document.getElementById('modal-confirm').textContent = 'Log Out';
 }
 
-/* ---- FORGOT PASSWORD (OTP based) ---- */
+/* ---- FORGOT PASSWORD (OTP based, retry-safe) ---- */
 let _resetEmail = '';
+let _resetVerifiedUserId = null;
+let _resetBusy = false;
+let _resetResendUntil = 0;
+let _resetResendTicker = null;
+let _resetResendBusy = false;
 
-async function doForgotPassword() {
-  const email = document.getElementById('login-email').value.trim();
-  const errEl = document.getElementById('login-err');
-  errEl.style.display = 'none';
-  if (!email || !validateEmailFmt(email)) {
-    errEl.textContent = 'Enter your email above first, then click Forgot password.';
-    errEl.style.display = 'flex';
-    return;
+function axUpdateResetResend() {
+  const btn = document.getElementById('reset-resend-btn');
+  if (!btn) return;
+  const wait = Math.max(0, Math.ceil((_resetResendUntil - Date.now()) / 1000));
+  btn.disabled = _resetResendBusy || wait > 0;
+  btn.textContent = wait ? 'Resend code in ' + wait + 's' : 'Resend code';
+  if (!wait && _resetResendTicker) {
+    clearInterval(_resetResendTicker);
+    _resetResendTicker = null;
   }
-  if (!supaClient) {
-    errEl.textContent = 'Reset requires a connection. Please try again.';
-    errEl.style.display = 'flex';
-    return;
-  }
-  setBtn('login-btn', true, 'Sending OTP...');
+}
+function axStartResetResendCooldown() {
+  _resetResendUntil = Date.now() + 60000;
+  if (_resetResendTicker) clearInterval(_resetResendTicker);
+  axUpdateResetResend();
+  _resetResendTicker = setInterval(axUpdateResetResend, 1000);
+}
+async function resendResetOTP() {
+  if (!_resetEmail || _resetBusy || _resetResendBusy || _resetVerifiedUserId ||
+      Date.now() < _resetResendUntil) return;
+  _resetResendBusy = true;
+  axUpdateResetResend();
   try {
     const { error } = await supaClient.auth.signInWithOtp({
-      email,
-      options: { shouldCreateUser: false }
+      email: _resetEmail, options: { shouldCreateUser: false }
     });
-    setBtn('login-btn', false);
+    if (error) throw error;
+    axStartResetResendCooldown();
+    const notice = document.getElementById('reset-otp-note');
+    if (notice) notice.textContent = 'Code requested. Check your inbox.';
+  } catch (_) {
+    _resetResendUntil = Date.now() + 15000;
+    const notice = document.getElementById('reset-otp-note');
+    if (notice) notice.textContent = 'Please wait before requesting another code.';
+  } finally {
+    _resetResendBusy = false;
+    axUpdateResetResend();
+  }
+}
+async function doForgotPassword() {
+  const email = document.getElementById('login-email').value.trim().toLowerCase();
+  const errEl = document.getElementById('login-err');
+  errEl.style.display = 'none';
+  if (!validateEmailFmt(email)) {
+    errEl.textContent = 'Enter your email above first, then select Forgot password.';
+    errEl.style.display = 'flex'; return;
+  }
+  if (!supaClient) {
+    errEl.textContent = 'Reset requires an internet connection.';
+    errEl.style.display = 'flex'; return;
+  }
+  setBtn('login-btn', true, 'Sending code...');
+  try {
+    const { error } = await supaClient.auth.signInWithOtp({
+      email, options: { shouldCreateUser: false }
+    });
     if (error) {
-      errEl.textContent = error.message || 'Could not send OTP. Check the email address.';
-      errEl.style.display = 'flex';
-      return;
+      errEl.textContent = 'Could not request a code right now. Try again shortly.';
+      errEl.style.display = 'flex'; return;
     }
     _resetEmail = email;
-    showToast('OTP sent to your email!', 'ok', '');
-    const body = `
-      <p style="font-size:.85rem;color:var(--text-3);margin-bottom:12px;">Enter the OTP sent to <b>${escapeHtml(email)}</b> and set a new password.</p>
-      <div class="fg"><label>OTP Code</label><input id="reset-otp" type="text" inputmode="numeric" placeholder="6-digit code"/></div>
-      <div class="fg"><label>New Password</label><input type="password" id="reset-pw" placeholder="At least 6 characters"/></div>
-      <div class="fg"><label>Confirm Password</label><input type="password" id="reset-pw2" placeholder="Re-enter new password"/></div>
-      <div id="reset-err" class="alert alert-e" style="display:none;"></div>`;
+    _resetVerifiedUserId = null;
+    const body = '<p class="ax-auth-otp-notice">Enter the 6-digit code sent to <b>' +
+      escapeHtml(email) + '</b>, then choose a new password.</p>' +
+      '<div class="fg"><label for="reset-otp">Verification code</label>' +
+      '<input id="reset-otp" type="text" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" ' +
+      'autocomplete="one-time-code" placeholder="6-digit code"/></div>' +
+      '<div class="fg"><label for="reset-pw">New password</label>' +
+      '<div class="ax-auth-pw-row"><input type="password" id="reset-pw" autocomplete="new-password" ' +
+      'placeholder="At least 12 characters"/><button class="ax-auth-toggle-pw" type="button" ' +
+      'onclick="toggleAuthPassword(\'reset-pw\',this)" aria-label="Show password">Show</button></div></div>' +
+      '<div class="fg"><label for="reset-pw2">Confirm new password</label>' +
+      '<div class="ax-auth-pw-row"><input type="password" id="reset-pw2" autocomplete="new-password" ' +
+      'placeholder="Re-enter password"/><button type="button" class="ax-auth-toggle-pw" ' +
+      'onclick="toggleAuthPassword(\'reset-pw2\',this)" aria-label="Show password">Show</button></div></div>' +
+      '<div class="ax-auth-otp-actions"><span id="reset-otp-note" role="status">' +
+      'Check your inbox and spam folder.</span><button class="ax-auth-otp-resend" ' +
+      'id="reset-resend-btn" type="button" onclick="resendResetOTP()">Resend code</button></div>' +
+      '<div id="reset-err" class="alert alert-e" style="display:none;"></div>';
     showModal('Reset Your Password', body, () => {});
     const btn = document.getElementById('modal-confirm');
     if (btn) { btn.textContent = 'Reset Password'; btn.onclick = doResetVerifyOTP; }
-  } catch (e) {
-    setBtn('login-btn', false);
-    errEl.textContent = 'Could not send OTP. Please try again.';
+    axStartResetResendCooldown();
+  } catch (_) {
+    errEl.textContent = 'Could not send verification code. Please try again.';
     errEl.style.display = 'flex';
+  } finally {
+    setBtn('login-btn', false);
   }
 }
 
 async function doResetVerifyOTP() {
+  if (_resetBusy) return;
   const otp = (document.getElementById('reset-otp')?.value || '').trim();
-  const pw  = document.getElementById('reset-pw')?.value || '';
+  const pw = document.getElementById('reset-pw')?.value || '';
   const pw2 = document.getElementById('reset-pw2')?.value || '';
   const errEl = document.getElementById('reset-err');
-  const showErr = (m) => { if (errEl) { errEl.textContent = m; errEl.style.display = 'flex'; } };
+  const showErr = message => {
+    if (errEl) { errEl.textContent = message; errEl.style.display = 'flex'; }
+  };
   if (errEl) errEl.style.display = 'none';
-  if (!otp)          { showErr('Please enter the OTP code.'); return; }
-  if (pw.length < 6) { showErr('Password must be at least 6 characters.'); return; }
-  if (pw !== pw2)    { showErr('Passwords do not match.'); return; }
+  if (!_resetVerifiedUserId && !/^\d{6}$/.test(otp)) {
+    showErr('Enter the 6-digit verification code.'); return;
+  }
+  const issue = axPasswordIssue(pw);
+  if (issue) { showErr(issue); return; }
+  if (pw !== pw2) { showErr('Passwords do not match.'); return; }
+
+  _resetBusy = true;
+  const submit = document.getElementById('modal-confirm');
+  if (submit) submit.disabled = true;
   try {
-    const { data, error } = await supaClient.auth.verifyOtp({
-      email: _resetEmail,
-      token: otp,
-      type: 'email'
-    });
-    if (error || !data.user) { showErr('Invalid or expired OTP. Please try again.'); return; }
+    if (!_resetVerifiedUserId) {
+      const { data, error } = await supaClient.auth.verifyOtp({
+        email: _resetEmail, token: otp, type: 'email'
+      });
+      if (error || !data?.user) {
+        document.getElementById('reset-otp').value = '';
+        throw Error('Invalid or expired code. Please try again.');
+      }
+      _resetVerifiedUserId = data.user.id;
+    }
+    const { data: { user }, error: userError } = await supaClient.auth.getUser();
+    if (userError || !user || user.id !== _resetVerifiedUserId ||
+        String(user.email || '').toLowerCase() !== _resetEmail)
+      throw Error('Your verified session expired. Please request another code.');
+
     const { error: pwErr } = await supaClient.auth.updateUser({ password: pw });
-    if (pwErr) { showErr(pwErr.message || 'Could not update password.'); return; }
-    closeModal();
+    if (pwErr) throw Error(pwErr.message || 'Could not save the new password.');
     await supaClient.auth.signOut();
-    showToast('Password updated! Please log in with your new password.', 'ok', '');
+    _resetEmail = '';
+    _resetVerifiedUserId = null;
+    if (_resetResendTicker) clearInterval(_resetResendTicker);
+    _resetResendTicker = null;
+    closeModal();
+    showToast('Password updated! Log in with the new password.', 'ok', '');
   } catch (e) {
-    showErr('Something went wrong. Please try again.');
+    showErr(e.message || 'Something went wrong. Please try again.');
+  } finally {
+    _resetBusy = false;
+    if (submit) submit.disabled = false;
   }
 }
