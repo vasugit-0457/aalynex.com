@@ -57,6 +57,167 @@ function setBtn(id, loading, text) {
   }
 }
 
+// Account onboarding V2: explicit success gates; passwords stay in JS memory only.
+const AX_AUTH_MIN_PASSWORD_LENGTH = 12;
+let _signupVerifiedUserId = null;
+let _signupPasswordApplied = false;
+let _signupRecoveryUserId = null;
+let _signupStage = 'start'; // start | otp | verified
+let _signupBusy = false;
+let _signupResendUntil = 0;
+let _signupResendTicker = null;
+let _signupResendBusy = false;
+
+function axPasswordIssue(value) {
+  const password = String(value || '');
+  if (password.length < AX_AUTH_MIN_PASSWORD_LENGTH)
+    return 'Use at least 12 characters for your password.';
+  if (!password.trim() || /^(.)\1{11,}$/.test(password))
+    return 'Choose a unique password or long passphrase.';
+  return '';
+}
+function axUpdatePasswordStrength() {
+  const field = document.getElementById('su-pw');
+  const output = document.getElementById('su-pw-strength');
+  if (!field || !output) return;
+  const pw = field.value;
+  const groups = [/[a-z]/.test(pw), /[A-Z]/.test(pw), /\d/.test(pw), /[^a-zA-Z0-9]/.test(pw)]
+    .filter(Boolean).length;
+  const strength = !pw || pw.length < 12 ? 'weak'
+    : pw.length >= 16 && groups >= 3 ? 'strong' : 'fair';
+  output.dataset.strength = strength;
+  output.textContent = !pw ? 'Use at least 12 characters. A unique passphrase works well.'
+    : axPasswordIssue(pw) || (strength === 'strong'
+      ? 'Strong length and character variety.'
+      : 'Good length. A longer unique passphrase is even better.');
+}
+function toggleAuthPassword(inputId, button) {
+  const input = document.getElementById(inputId);
+  if (!input || !button) return;
+  const show = input.type === 'password';
+  input.type = show ? 'text' : 'password';
+  button.textContent = show ? 'Hide' : 'Show';
+  button.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+  button.setAttribute('aria-pressed', String(show));
+}
+function axAuthSignupError(message) {
+  const err = document.getElementById('signup-err');
+  if (!err) return;
+  err.textContent = message;
+  err.style.display = 'flex';
+}
+function axAuthSignupInput() {
+  const name = document.getElementById('su-name').value.trim();
+  const phoneRaw = document.getElementById('su-phone').value.trim();
+  const email = document.getElementById('su-email').value.trim().toLowerCase();
+  const pw = document.getElementById('su-pw').value;
+  const pw2 = document.getElementById('su-pw2').value;
+  const profession = document.getElementById('su-profession').value;
+  const platform = document.getElementById('su-platform')?.value || '';
+  if (name.length < 2) throw Error('Enter your full name (at least 2 characters).');
+  if (!validateEmailFmt(email)) throw Error('Enter a valid email address.');
+  const issue = axPasswordIssue(pw);
+  if (issue) throw Error(issue);
+  if (pw !== pw2) throw Error('The confirmation password does not match.');
+  let phone = '';
+  if (phoneRaw) {
+    const result = validatePhone(phoneRaw);
+    if (!result.ok) throw Error(result.msg);
+    phone = result.phone;
+  }
+  return { name, phone, email, pw, profession, platform, role: signupRole };
+}
+function axSetSignupButton() {
+  const btn = document.getElementById('signup-btn');
+  if (!btn) return;
+  if (_signupStage === 'start') {
+    btn.textContent = 'Create Account →';
+    btn.onclick = doSignup;
+  } else {
+    btn.textContent = _signupStage === 'otp' ? 'Verify & Create Account' : 'Complete Account';
+    btn.onclick = doSignupVerifyOTP;
+  }
+}
+function axUpdateSignupResendButton() {
+  const btn = document.getElementById('signup-resend-btn');
+  if (!btn) return;
+  const seconds = Math.max(0, Math.ceil((_signupResendUntil - Date.now()) / 1000));
+  btn.disabled = _signupResendBusy || seconds > 0;
+  btn.textContent = seconds > 0 ? 'Resend code in ' + seconds + 's' : 'Resend code';
+  if (!seconds && _signupResendTicker) {
+    clearInterval(_signupResendTicker);
+    _signupResendTicker = null;
+  }
+}
+function axStartSignupResendCooldown() {
+  _signupResendUntil = Date.now() + 60000;
+  if (_signupResendTicker) clearInterval(_signupResendTicker);
+  axUpdateSignupResendButton();
+  _signupResendTicker = setInterval(axUpdateSignupResendButton, 1000);
+}
+function axRenderSignupOTP() {
+  if (document.getElementById('signup-otp-fg')) return;
+  const el = document.createElement('div');
+  el.className = 'fg';
+  el.id = 'signup-otp-fg';
+  el.innerHTML = '<label for="signup-otp">6-digit verification code</label>' +
+    '<input id="signup-otp" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" ' +
+    'autocomplete="one-time-code" placeholder="Enter your 6-digit code"/>' +
+    '<div class="ax-auth-otp-actions"><span>Check your inbox and spam folder.</span>' +
+    '<button type="button" class="ax-auth-otp-resend" id="signup-resend-btn" ' +
+    'onclick="resendSignupOTP()">Resend code</button></div>' +
+    '<div class="ax-auth-otp-notice" id="signup-resend-note" role="status"></div>';
+  const btn = document.getElementById('signup-btn');
+  btn.parentElement.insertBefore(el, btn);
+}
+async function resendSignupOTP() {
+  if (_signupBusy || _signupResendBusy || _signupStage !== 'otp' ||
+      !_signupOtpData.email || Date.now() < _signupResendUntil) return;
+  _signupResendBusy = true;
+  axUpdateSignupResendButton();
+  const label = document.getElementById('signup-resend-note');
+  if (label) label.textContent = '';
+  try {
+    const { error } = await supaClient.auth.signInWithOtp({
+      email: _signupOtpData.email, options: { shouldCreateUser: false }
+    });
+    if (error) throw error;
+    axStartSignupResendCooldown();
+    if (label) label.textContent = 'New code requested. Check your email.';
+  } catch (_) {
+    if (label) label.textContent = 'Could not resend now. Please try again shortly.';
+    _signupResendUntil = Date.now() + 15000;
+  } finally {
+    _signupResendBusy = false;
+    axUpdateSignupResendButton();
+  }
+}
+// Recover an email-verified Supabase user that has no Aalynex profile.
+// No guessed role/profile record is automatically created.
+function showVerifiedSignupRecovery(user) {
+  if (!user?.id || !user.email || !user.email_confirmed_at) return false;
+  _signupRecoveryUserId = user.id;
+  _signupVerifiedUserId = user.id;
+  _signupPasswordApplied = false;
+  _signupOtpData = {};
+  _signupStage = 'start';
+  showScreen('screen-auth');
+  switchTab('signup');
+  const email = document.getElementById('su-email');
+  email.value = user.email;
+  email.readOnly = true;
+  const note = document.getElementById('su-recovery-note');
+  note.textContent = 'Your email is already verified, but account setup is incomplete. ' +
+    'Choose your role, enter your details and set a new password to finish safely.';
+  note.style.display = 'block';
+  const metaRole = user.user_metadata?.role;
+  setSRole(metaRole === 'freelancer' ? 'freelancer' : 'creator');
+  if (typeof user.user_metadata?.name === 'string')
+    document.getElementById('su-name').value = user.user_metadata.name;
+  axSetSignupButton();
+  return true;
+}
+
 async function doLogin() {
   const email = document.getElementById('login-email').value.trim();
   const pw = document.getElementById('login-pw').value;
@@ -78,7 +239,6 @@ async function doLogin() {
     setBtn('login-btn', false);
     errEl.textContent = msg || 'Invalid credentials.';
     errEl.style.display = 'flex';
-    document.getElementById('login-email').value = '';
     document.getElementById('login-pw').value = '';
   }
 
